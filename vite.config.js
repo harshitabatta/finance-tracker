@@ -15,7 +15,10 @@ export default defineConfig({
         background_color: '#f8fafc',
         display: 'standalone',
         start_url: '/',
-        icons: [],
+        scope: '/',
+        icons: [
+          { src: '/icons/finance-icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any maskable' },
+        ],
       },
     }),
   ],
