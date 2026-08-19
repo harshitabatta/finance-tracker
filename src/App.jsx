@@ -30,6 +30,21 @@ function getToday() {
   return new Date(now.getTime() - offset * 60 * 1000).toISOString().slice(0, 10)
 }
 
+function formatDate(dateString) {
+  return new Intl.DateTimeFormat('en-IN', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  }).format(new Date(`${dateString}T00:00:00`))
+}
+
+function formatAmount(amount) {
+  return new Intl.NumberFormat('en-IN', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(Number(amount))
+}
+
 function App() {
   const [session, setSession] = useState(null)
   const [email, setEmail] = useState('')
@@ -44,6 +59,9 @@ function App() {
   const [category, setCategory] = useState('')
   const [note, setNote] = useState('')
   const [saving, setSaving] = useState(false)
+  const [transactions, setTransactions] = useState([])
+  const [loadingTransactions, setLoadingTransactions] = useState(false)
+  const [historyError, setHistoryError] = useState('')
 
   const categories = useMemo(
     () => (type === 'spent' ? SPENDING_CATEGORIES : RECEIVED_CATEGORIES),
@@ -75,29 +93,39 @@ function App() {
   useEffect(() => {
     if (!session || !supabase) {
       setConnectionStatus(session ? 'Supabase connected' : '')
+      setTransactions([])
       return undefined
     }
 
     let active = true
 
-    async function verifyAccess() {
-      const { error: queryError } = await supabase
+    async function loadTransactions() {
+      setLoadingTransactions(true)
+      setHistoryError('')
+
+      const { data, error: queryError } = await supabase
         .from('transactions')
-        .select('id')
-        .limit(1)
+        .select('id, date, type, amount, category, note, created_at')
+        .eq('user_id', session.user.id)
+        .order('date', { ascending: false })
+        .order('created_at', { ascending: false })
 
       if (!active) return
 
+      setLoadingTransactions(false)
+
       if (queryError) {
         setConnectionStatus('Database access failed')
-        setError(queryError.message)
-      } else {
-        setConnectionStatus('Supabase connected')
-        setError('')
+        setHistoryError(queryError.message)
+        return
       }
+
+      setConnectionStatus('Supabase connected')
+      setHistoryError('')
+      setTransactions(data ?? [])
     }
 
-    verifyAccess()
+    loadTransactions()
 
     return () => {
       active = false
@@ -176,14 +204,18 @@ function App() {
 
     setSaving(true)
 
-    const { error: insertError } = await supabase.from('transactions').insert({
-      user_id: session.user.id,
-      date,
-      type,
-      amount: numericAmount,
-      category,
-      note: note.trim() || null,
-    })
+    const { data: insertedTransaction, error: insertError } = await supabase
+      .from('transactions')
+      .insert({
+        user_id: session.user.id,
+        date,
+        type,
+        amount: numericAmount,
+        category,
+        note: note.trim() || null,
+      })
+      .select('id, date, type, amount, category, note, created_at')
+      .single()
 
     setSaving(false)
 
@@ -197,6 +229,7 @@ function App() {
     setCategory('')
     setNote('')
     setDate(getToday())
+    setTransactions((current) => [insertedTransaction, ...current])
   }
 
   if (!isSupabaseConfigured) {
@@ -363,6 +396,41 @@ function App() {
             </button>
           </form>
         </div>
+
+        <section className="history-section">
+          <div className="section-heading history-heading">
+            <div>
+              <h2>Transaction history</h2>
+              <p>Your transactions, newest first.</p>
+            </div>
+            <span className="transaction-count">
+              {transactions.length} {transactions.length === 1 ? 'transaction' : 'transactions'}
+            </span>
+          </div>
+
+          {loadingTransactions ? (
+            <div className="empty-state">Loading transactions...</div>
+          ) : historyError ? (
+            <div className="empty-state error-state">{historyError}</div>
+          ) : transactions.length === 0 ? (
+            <div className="empty-state">No transactions yet.</div>
+          ) : (
+            <div className="transaction-list">
+              {transactions.map((transaction) => (
+                <article className="transaction-row" key={transaction.id}>
+                  <div className="transaction-main">
+                    <div className="transaction-date">{formatDate(transaction.date)}</div>
+                    <div className="transaction-category">{transaction.category}</div>
+                    {transaction.note && <div className="transaction-note">{transaction.note}</div>}
+                  </div>
+                  <div className={transaction.type === 'spent' ? 'transaction-amount spent' : 'transaction-amount received'}>
+                    {transaction.type === 'spent' ? '-' : '+'} ₹{formatAmount(transaction.amount)}
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
       </section>
     </main>
   )
