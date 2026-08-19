@@ -1,5 +1,34 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { isSupabaseConfigured, supabase } from './lib/supabase'
+
+const SPENDING_CATEGORIES = [
+  'Food',
+  'Transport',
+  'Shopping',
+  'Bills',
+  'Entertainment',
+  'Health',
+  'Education',
+  'Rent / Housing',
+  'Subscriptions',
+  'Travel',
+  'Other',
+]
+
+const RECEIVED_CATEGORIES = [
+  'Salary',
+  'Freelance',
+  'Gift',
+  'Refund',
+  'Interest',
+  'Other',
+]
+
+function getToday() {
+  const now = new Date()
+  const offset = now.getTimezoneOffset()
+  return new Date(now.getTime() - offset * 60 * 1000).toISOString().slice(0, 10)
+}
 
 function App() {
   const [session, setSession] = useState(null)
@@ -9,6 +38,17 @@ function App() {
   const [status, setStatus] = useState('')
   const [error, setError] = useState('')
   const [connectionStatus, setConnectionStatus] = useState('Checking Supabase...')
+  const [date, setDate] = useState(getToday)
+  const [type, setType] = useState('spent')
+  const [amount, setAmount] = useState('')
+  const [category, setCategory] = useState('')
+  const [note, setNote] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  const categories = useMemo(
+    () => (type === 'spent' ? SPENDING_CATEGORIES : RECEIVED_CATEGORIES),
+    [type],
+  )
 
   useEffect(() => {
     if (!isSupabaseConfigured || !supabase) {
@@ -35,7 +75,7 @@ function App() {
   useEffect(() => {
     if (!session || !supabase) {
       setConnectionStatus(session ? 'Supabase connected' : '')
-      return
+      return undefined
     }
 
     let active = true
@@ -63,6 +103,10 @@ function App() {
       active = false
     }
   }, [session])
+
+  useEffect(() => {
+    setCategory('')
+  }, [type])
 
   async function handleAuth(event) {
     event.preventDefault()
@@ -111,6 +155,48 @@ function App() {
     await supabase.auth.signOut()
     setStatus('')
     setError('')
+  }
+
+  async function handleAddTransaction(event) {
+    event.preventDefault()
+    setStatus('')
+    setError('')
+
+    if (!supabase || !session) {
+      setError('You must be signed in to add a transaction.')
+      return
+    }
+
+    const numericAmount = Number(amount)
+
+    if (!date || !category || !Number.isFinite(numericAmount) || numericAmount <= 0) {
+      setError('Enter a valid date, amount, and category.')
+      return
+    }
+
+    setSaving(true)
+
+    const { error: insertError } = await supabase.from('transactions').insert({
+      user_id: session.user.id,
+      date,
+      type,
+      amount: numericAmount,
+      category,
+      note: note.trim() || null,
+    })
+
+    setSaving(false)
+
+    if (insertError) {
+      setError(insertError.message)
+      return
+    }
+
+    setStatus('Transaction added successfully.')
+    setAmount('')
+    setCategory('')
+    setNote('')
+    setDate(getToday())
   }
 
   if (!isSupabaseConfigured) {
@@ -185,8 +271,8 @@ function App() {
 
   return (
     <main className="app-shell">
-      <section className="welcome-card">
-        <div className="dashboard-header">
+      <section className="finance-card">
+        <header className="dashboard-header">
           <div>
             <p className="eyebrow">PERSONAL FINANCE</p>
             <h1>Finance Tracker</h1>
@@ -194,12 +280,89 @@ function App() {
           <button className="secondary-button" type="button" onClick={handleSignOut}>
             Sign out
           </button>
+        </header>
+
+        <div className="transaction-section">
+          <div className="section-heading">
+            <div>
+              <h2>Add transaction</h2>
+              <p>Record money received or spent.</p>
+            </div>
+            <div className="status-pill">{connectionStatus}</div>
+          </div>
+
+          <form className="transaction-form" onSubmit={handleAddTransaction}>
+            <label>
+              Date
+              <input type="date" value={date} onChange={(event) => setDate(event.target.value)} />
+            </label>
+
+            <fieldset className="type-fieldset">
+              <legend>Type</legend>
+              <div className="type-toggle">
+                <button
+                  className={type === 'spent' ? 'type-button active spent' : 'type-button'}
+                  type="button"
+                  onClick={() => setType('spent')}
+                >
+                  Spent
+                </button>
+                <button
+                  className={type === 'received' ? 'type-button active received' : 'type-button'}
+                  type="button"
+                  onClick={() => setType('received')}
+                >
+                  Received
+                </button>
+              </div>
+            </fieldset>
+
+            <label>
+              Amount
+              <div className="amount-input">
+                <span>₹</span>
+                <input
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  inputMode="decimal"
+                  value={amount}
+                  onChange={(event) => setAmount(event.target.value)}
+                  placeholder="0.00"
+                />
+              </div>
+            </label>
+
+            <label>
+              Category
+              <select value={category} onChange={(event) => setCategory(event.target.value)}>
+                <option value="">Select a category</option>
+                {categories.map((item) => (
+                  <option key={item} value={item}>
+                    {item}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label>
+              Note <span className="optional">(optional)</span>
+              <textarea
+                value={note}
+                onChange={(event) => setNote(event.target.value)}
+                rows="3"
+                placeholder="Add a note if you want to remember the details"
+              />
+            </label>
+
+            {error && <p className="form-error">{error}</p>}
+            {status && <p className="form-success">{status}</p>}
+
+            <button className="primary-button add-button" type="submit" disabled={saving}>
+              {saving ? 'Adding...' : 'Add transaction'}
+            </button>
+          </form>
         </div>
-        <p className="subtitle">
-          Your account is connected. The transaction database is ready for the next step.
-        </p>
-        <div className="status-pill">{connectionStatus}</div>
-        {error && <p className="connection-error">{error}</p>}
       </section>
     </main>
   )
